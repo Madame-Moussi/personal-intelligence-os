@@ -2139,6 +2139,435 @@ function markAutomationDone(workflow) {
   setStatus(`Marked "${workflow.name}" as done and moved it to Completed Automations.`)
 }
 
+function uniquePromptRows(rows, fallback, limit = 12) {
+  const out = []
+  const seen = new Set()
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const text = String(row || "").replace(/\s+/g, " ").trim()
+    const key = text.toLowerCase()
+    if (!text || seen.has(key)) continue
+    seen.add(key)
+    out.push(text)
+    if (out.length >= Math.max(1, toNumber(limit, 12))) break
+  }
+  if (out.length) return out
+  return [String(fallback || "").trim() || "No data provided."]
+}
+
+function markdownBulletLines(rows, fallback, limit = 12) {
+  return uniquePromptRows(rows, fallback, limit)
+    .map((row) => `- ${row}`)
+    .join("\n")
+}
+
+function workflowBrowserSites(workflow) {
+  const rows = []
+  const seen = new Set()
+  const steps = Array.isArray(workflow?.steps) ? workflow.steps : []
+  for (const step of steps) {
+    const action = String(step?.action || "").trim()
+    const match = action.match(/^browser\s+visit\s+(.+)$/i)
+    if (!match?.[1]) continue
+    const normalized = String(match[1] || "")
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .split(/[/?#\s]/)[0]
+      .replace(/\.+$/, "")
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    rows.push(normalized)
+    if (rows.length >= 4) break
+  }
+  return rows
+}
+
+function inferWorkflowIntentForPrompt(workflow) {
+  const text = [
+    String(workflow?.name || ""),
+    String(workflow?.details || ""),
+    String(workflow?.category || ""),
+    ...(Array.isArray(workflow?.tools) ? workflow.tools : []),
+    ...(Array.isArray(workflow?.steps) ? workflow.steps.map((step) => String(step?.action || "")) : []),
+  ]
+    .join(" ")
+    .toLowerCase()
+  const jobFlow = /(job|jobs|application|hiring|resume|recruiter|career)/.test(text) || /linkedin/.test(text)
+  if (jobFlow) {
+    return {
+      jobFlow: true,
+      label: "researching open roles and preparing job applications",
+      role:
+        "You are an Automation Systems Architect focused on reliable workflow agents, job-search automation, structured data capture, and company intelligence research.",
+      discoverySurface: "LinkedIn",
+    }
+  }
+  return {
+    jobFlow: false,
+    label: "intent-aware workflow automation and decision support",
+    role:
+      "You are an Automation Systems Architect focused on reliable workflow agents, intent-aware workflow automation, structured data capture, and company intelligence research.",
+    discoverySurface: "the observed workflow tools",
+  }
+}
+
+function formatPromptToolRows(workflow, requiredTools) {
+  const sites = workflowBrowserSites(workflow)
+  const rows = []
+  const tools = Array.isArray(requiredTools) ? requiredTools : []
+  for (const raw of tools) {
+    const tool = String(raw || "").trim()
+    if (!tool) continue
+    if (tool.toLowerCase() === "web browser" && sites.length) {
+      rows.push(`Web Browser (observed sites: ${sites.join(", ")})`)
+    } else {
+      rows.push(friendlyToolName(tool))
+    }
+  }
+  if (!rows.length && sites.length) rows.push(`Web Browser (observed sites: ${sites.join(", ")})`)
+  return uniquePromptRows(rows, "Observed workflow tools only (no external tools inferred).", 12)
+}
+
+function buildComprehensivePromptTemplate({ workflow, days, title, goal, processSteps, requiredTools }) {
+  const intent = inferWorkflowIntentForPrompt(workflow)
+  const jobFlow = Boolean(intent.jobFlow)
+  const discoverySurface = intent.discoverySurface
+  const objectiveRows = jobFlow
+    ? [
+        `find relevant jobs from ${discoverySurface},`,
+        "add them to a tracker in a structured and deduplicated way,",
+        "conduct deep research on each company,",
+        "produce useful summaries that help me evaluate whether to apply.",
+      ]
+    : [
+        `find relevant qualifying work items from ${discoverySurface},`,
+        "add them to a tracker in a structured and deduplicated way,",
+        "conduct deep context research on each selected item or organization,",
+        "produce useful summaries that help me decide what action to take next.",
+      ]
+  const successRows = jobFlow
+    ? [
+        `${discoverySurface} jobs are consistently identified using clear qualification rules,`,
+        "jobs are added to a tracker with validated fields and no duplicate entries,",
+        "each company is researched in depth using public web sources,",
+        "outputs are logged clearly with completion status, confidence, and failure reasons,",
+        "exceptions such as auth/session expiry, broken pages, missing fields, or research gaps are surfaced for review rather than silently ignored,",
+        "the workflow is idempotent, auditable, and practical to run repeatedly.",
+      ]
+    : [
+        "qualifying workflow items are identified using explicit relevance thresholds,",
+        "records are written with validated fields and deduplication safeguards,",
+        "supporting context research is generated from observed tools and public sources,",
+        "outputs include completion status, confidence notes, and clear failure reasons,",
+        "exceptions such as auth/session expiry, missing fields, and source inconsistencies are surfaced for review rather than silently ignored,",
+        "the workflow is idempotent, auditable, and practical to run repeatedly.",
+      ]
+
+  const stageBlocks = jobFlow
+    ? [
+        {
+          title: "Stage 1: Job Discovery",
+          rows: [
+            `visit ${discoverySurface} job search pages`,
+            "detect job posts that match predefined relevance criteria",
+            "extract core job details",
+            "identify whether the job is new or already tracked",
+            "decide whether to save, skip, or flag for review",
+          ],
+        },
+        {
+          title: "Stage 2: Structured Tracking",
+          rows: [
+            "write the selected job into a tracker",
+            "ensure deduplication through a strong idempotency key",
+            "validate required fields before writing",
+            "log status of write success or failure",
+            "preserve prior data rather than destructively overwriting it",
+          ],
+        },
+        {
+          title: "Stage 3: Deep Company Research",
+          rows: [
+            "company overview",
+            "core product or service",
+            "business model",
+            "stage and traction signals",
+            "leadership and notable team members",
+            "recent news and major developments",
+            "funding history if available",
+            "hiring signals",
+            "market positioning and competitors",
+            "risks or red flags",
+            "why the role may or may not be attractive",
+          ],
+        },
+        {
+          title: "Stage 4: Candidate Decision Support",
+          rows: [
+            "Is this company worth my time?",
+            "Is this role aligned with my goals?",
+            "What is differentiated or risky about this opportunity?",
+            "What should I investigate further before applying?",
+          ],
+        },
+      ]
+    : [
+        {
+          title: "Stage 1: Signal Discovery",
+          rows: [
+            `visit ${discoverySurface} and related observed workflow surfaces`,
+            "detect items that match predefined relevance criteria",
+            "extract core details needed for downstream decisions",
+            "identify whether the item is new or already tracked",
+            "decide whether to save, skip, or flag for review",
+          ],
+        },
+        {
+          title: "Stage 2: Structured Tracking",
+          rows: [
+            "write selected items into a tracker",
+            "ensure deduplication through a strong idempotency key",
+            "validate required fields before writing",
+            "log status of write success or failure",
+            "preserve prior data rather than destructively overwriting it",
+          ],
+        },
+        {
+          title: "Stage 3: Context Research",
+          rows: [
+            "subject/company overview",
+            "core product, process, or initiative context",
+            "business or operational significance",
+            "stage and traction signals where relevant",
+            "recent updates and noteworthy developments",
+            "competitive or comparative positioning",
+            "risks or red flags",
+            "why the opportunity may or may not be attractive",
+          ],
+        },
+        {
+          title: "Stage 4: Decision Support",
+          rows: [
+            "Is this worth deeper follow-up?",
+            "Is this aligned with my goals and priorities?",
+            "What is differentiated or risky here?",
+            "What should I investigate further before acting?",
+          ],
+        },
+      ]
+
+  const stageText = stageBlocks
+    .map((stage) => `### ${stage.title}\n${markdownBulletLines(stage.rows, "No stage details provided.", 14)}`)
+    .join("\n\n")
+
+  const processLines = markdownBulletLines(processSteps, "No process steps provided.", 12)
+  const toolLines = markdownBulletLines(formatPromptToolRows(workflow, requiredTools), "No explicit tools provided.", 12)
+  const watchLines = markdownBulletLines(
+    [
+      "Duplicate events and retries can create duplicate outputs unless idempotency keys are enforced.",
+      "Auth/session expiry or permission issues can silently fail runs unless surfaced in alerts.",
+      "Source pages may have inconsistent structure, incomplete fields, or pagination issues.",
+      "Entity names may require normalization before writing and research.",
+      "Deep research can become noisy unless bounded by templates and stopping conditions.",
+    ],
+    "No specific risks detected.",
+    8,
+  )
+  const avoidLines = markdownBulletLines(
+    [
+      "Avoid destructive writes (delete/overwrite) without an explicit confirmation checkpoint.",
+      "Avoid running end-to-end actions on every noisy trigger; require qualifying conditions first.",
+      "Avoid swallowing errors; always emit failure context and retry guidance.",
+      "Avoid generic summaries with little decision value.",
+      "Avoid collecting data that is not actionable.",
+    ],
+    "No avoid-list provided.",
+    8,
+  )
+  const constraintLines = markdownBulletLines(
+    [
+      "Only add or process items that pass relevance thresholds.",
+      "Avoid duplicate entries caused by retries, repeated visits, or duplicate listing surfaces.",
+      "Avoid destructive writes, deletions, or overwrites without an explicit confirmation checkpoint.",
+      "Avoid running full deep research on every noisy trigger; require qualification first.",
+      "Avoid silent failures; always emit failure context, likely cause, and retry guidance.",
+      "Surface auth/session issues explicitly.",
+      "Preserve logs for auditability.",
+      "Prefer modular architecture so discovery, tracking, and research can run independently if needed.",
+    ],
+    "Apply explicit guardrails for reliability and auditability.",
+    12,
+  )
+
+  return [
+    "## Role to Assume",
+    intent.role,
+    "",
+    "## Core Objective",
+    "Design an automation system that helps me:",
+    markdownBulletLines(objectiveRows, "design a reliable automation around this workflow.", 8),
+    "",
+    "The system should reduce manual browsing, copying, and context switching while maintaining high reliability and clear human oversight.",
+    `Operational target: ${goal}`,
+    "",
+    "## Success Criteria",
+    "Success means:",
+    markdownBulletLines(successRows, "the workflow runs reliably with validated outputs and visible failure handling.", 10),
+    "",
+    "## Instructions for How to Think",
+    "Reason carefully and systematically before answering, but do not reveal hidden internal reasoning.",
+    "Instead, provide a structured and transparent analysis that shows:",
+    "- assumptions,",
+    "- workflow diagnosis,",
+    "- system design,",
+    "- agent responsibilities,",
+    "- qualifying logic,",
+    "- data schema,",
+    "- error handling,",
+    "- prioritization,",
+    "- risks and tradeoffs.",
+    "",
+    "Be practical, not theoretical.",
+    "Be critical about where full automation is appropriate versus where human review should remain.",
+    "Do not assume every item should be captured or every company/topic should be researched equally deeply.",
+    "Design for signal over noise.",
+    "",
+    "## Workflow to Design",
+    `The target workflow should support this inferred intent: ${intent.label}.`,
+    "",
+    stageText,
+    "",
+    "## Existing Process Map",
+    processLines,
+    "",
+    "## Tools Required",
+    toolLines,
+    "",
+    "## Key Design Constraints",
+    constraintLines,
+    "",
+    "## What to Look Out For",
+    watchLines,
+    "",
+    "## What to Avoid",
+    avoidLines,
+    "",
+    "## Context",
+    `- Workflow Title: ${title}`,
+    `- Window: last ${Math.max(1, toNumber(days, 7))} days`,
+    "",
+    "## What I Want You to Produce",
+    "Please structure your response exactly as follows:",
+    "",
+    "### 1. Context Summary",
+    "Summarize the workflow and operating objective.",
+    "",
+    "### 2. Assumptions",
+    "List the assumptions you are making about the process, tracker, and decision goals.",
+    "",
+    "### 3. Workflow Diagnosis",
+    "Explain where the current friction likely exists between discovery, data capture, research, and decision-making.",
+    "",
+    "### 4. Recommended Automation Design",
+    "Design the automation end-to-end.",
+    "Include:",
+    "- triggers,",
+    "- qualifying conditions,",
+    "- extraction logic,",
+    "- deduplication logic,",
+    "- tracker write logic,",
+    "- research workflow,",
+    "- review checkpoints,",
+    "- completion logging.",
+    "",
+    "### 5. Recommended Agents",
+    "Define the agents that should exist in the system.",
+    "For each agent, include:",
+    "- name,",
+    "- mission,",
+    "- trigger,",
+    "- inputs,",
+    "- outputs,",
+    "- boundaries,",
+    "- escalation rules,",
+    "- human-in-the-loop requirements,",
+    "- key failure modes.",
+    "",
+    "### 6. Qualification Framework",
+    "Define how the system should decide whether an item is relevant enough to save.",
+    "Include:",
+    "- hard filters,",
+    "- soft scoring criteria,",
+    "- reasons to skip,",
+    "- reasons to flag for review.",
+    "",
+    "### 7. Tracker Schema",
+    "Propose the ideal tracker structure and fields.",
+    "Include:",
+    "- item-level fields,",
+    "- organization/company-level fields,",
+    "- research-level fields,",
+    "- workflow status fields,",
+    "- timestamps,",
+    "- idempotency key design.",
+    "",
+    "### 8. Research Framework",
+    "Design the deep research output template.",
+    "It should capture:",
+    "- summary,",
+    "- product/service context,",
+    "- business model,",
+    "- market,",
+    "- team,",
+    "- traction,",
+    "- funding when available,",
+    "- news,",
+    "- competitors,",
+    "- risks,",
+    "- decision thesis,",
+    "- open questions.",
+    "",
+    "### 9. Prioritization Logic",
+    "Explain when the system should:",
+    "- only save an item,",
+    "- save plus light research,",
+    "- save plus deep research,",
+    "- escalate to me for manual review.",
+    "",
+    "### 10. Reliability and Error Handling",
+    "Describe:",
+    "- retry strategy,",
+    "- duplicate prevention,",
+    "- logging,",
+    "- failure alerts,",
+    "- fallback behavior,",
+    "- safe handling of partial completion.",
+    "",
+    "### 11. What Should Stay Human-Led",
+    "Identify which parts of the process should remain human-owned and why.",
+    "",
+    "### 12. Implementation Roadmap",
+    "Break this into phases:",
+    "- Phase 1: basic capture and tracking,",
+    "- Phase 2: qualification and deduplication,",
+    "- Phase 3: research agent,",
+    "- Phase 4: decision-support layer.",
+    "",
+    "### 13. Final Recommendation",
+    "End with:",
+    "- the best minimal viable automation,",
+    "- the best longer-term agent system,",
+    "- the biggest risk to avoid,",
+    "- the most important design principle.",
+    "",
+    "## Quality Bar",
+    "The answer should be detailed, operational, and implementation-aware.",
+    "Do not give generic suggestions like 'build an agent'.",
+    "Specify exactly how the workflow should work, what each component does, and where human judgment should remain.",
+    "Optimize for usefulness, reliability, and decision quality.",
+  ].join("\n")
+}
+
 function localAutomationDraft(workflow) {
   const observedTools = Array.isArray(workflow?.tools)
     ? workflow.tools.map((tool) => titleCase(tool)).filter(Boolean)
@@ -2176,18 +2605,6 @@ function localAutomationDraft(workflow) {
   const requiredTools = workflowTools.slice(0, 6)
   const title = `${workflow?.name || "Workflow"} Automation`
   const goal = `Reclaim ${fmtOne(workflow?.durationMinutes ? (workflow.durationMinutes * 0.65) / 60 : 1.5)} hours/week by automating the transition between ${sourceTool} and ${targetTool}.`
-  const processBullets = process.map((step) => `- ${step}`).join("\n")
-  const toolBullets = requiredTools.map((tool) => `- ${tool}`).join("\n")
-  const lookOutFor = [
-    "- Duplicate triggers causing repeated writes unless idempotency is enforced.",
-    "- Missing/invalid fields before write actions.",
-    "- API auth/session expiry and transient tool errors.",
-  ].join("\n")
-  const avoid = [
-    "- Avoid destructive overwrites without a confirmation checkpoint.",
-    "- Avoid auto-sending external messages without human review.",
-    "- Avoid silent failures; always surface run errors.",
-  ].join("\n")
   return {
     ok: true,
     workflow_id: workflow?.id || "",
@@ -2205,30 +2622,14 @@ function localAutomationDraft(workflow) {
       instructions,
       required_tools: requiredTools,
     },
-    llm_prompt: [
-      "## Role To Assume",
-      "Automation Systems Architect focused on reliable workflow agents",
-      "",
-      "## Objective and Success",
-      `**Objective:** ${goal}`,
-      "**Success Looks Like:** The workflow runs with validated inputs, idempotent writes, auditable logs, and clear exception escalation.",
-      "",
-      "## Process Map",
-      processBullets,
-      "",
-      "## Tools Required",
-      toolBullets,
-      "",
-      "## What To Look Out For",
-      lookOutFor,
-      "",
-      "## What To Avoid",
-      avoid,
-      "",
-      "## Context",
-      `- Workflow Title: ${title}`,
-      `- Window: last ${state.days} days`,
-    ].join("\n"),
+    llm_prompt: buildComprehensivePromptTemplate({
+      workflow,
+      days: state.days,
+      title,
+      goal,
+      processSteps: process,
+      requiredTools,
+    }),
     estimated_hours_saved_per_week: Math.max(0.5, Number((workflow?.durationMinutes || 90) / 60) * 0.65),
   }
 }
@@ -2409,33 +2810,15 @@ function localEditedAutomationDraft(baseDraft, workflow, instructionText) {
     updatedSteps.push(`Apply user edit: ${instruction}`)
   }
   sourceDraft.process_map = updatedSteps.slice(0, 10)
-  const processBullets = sourceDraft.process_map.map((step) => `- ${normalizeProcessStepLabel(step)}`).join("\n")
   const tools = Array.isArray(sourceDraft?.skill_draft?.required_tools) ? sourceDraft.skill_draft.required_tools : []
-  const toolBullets = tools.map((tool) => `- ${tool}`).join("\n")
-  sourceDraft.llm_prompt = [
-    "## Role To Assume",
-    "Automation Systems Architect focused on reliable workflow agents",
-    "",
-    "## Objective and Success",
-    `**Objective:** ${String(sourceDraft?.skill_draft?.goal || "Automate this workflow.")}`,
-    "**Success Looks Like:** The revised flow is executable, validated, and auditable.",
-    "",
-    "## Process Map",
-    processBullets,
-    "",
-    "## Tools Required",
-    toolBullets || "- No explicit tools provided",
-    "",
-    "## What To Look Out For",
-    "- Verify each transition has deterministic inputs and outputs.",
-    "",
-    "## What To Avoid",
-    "- Avoid destructive or customer-facing actions without confirmation.",
-    "",
-    "## Context",
-    `- Workflow Title: ${String(sourceDraft.workflow_name || workflow?.name || "Workflow")}`,
-    `- Edit Request: ${instruction || "none"}`,
-  ].join("\n")
+  sourceDraft.llm_prompt = buildComprehensivePromptTemplate({
+    workflow,
+    days: state.days,
+    title: String(sourceDraft?.skill_draft?.title || sourceDraft.workflow_name || workflow?.name || "Workflow"),
+    goal: String(sourceDraft?.skill_draft?.goal || "Automate this workflow."),
+    processSteps: sourceDraft.process_map.map((step) => normalizeProcessStepLabel(step)).filter(Boolean),
+    requiredTools: tools,
+  })
   sourceDraft.source = "fallback-edit"
   return sourceDraft
 }

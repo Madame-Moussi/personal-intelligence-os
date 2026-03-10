@@ -2808,6 +2808,189 @@ def _automation_avoid_items(required_tools: list[str]) -> list[str]:
   return items[:4]
 
 
+def _unique_prompt_rows(rows: list[str], fallback: str, limit: int = 12) -> list[str]:
+  cleaned: list[str] = []
+  seen: set[str] = set()
+  for row in rows:
+    text = " ".join(str(row or "").split()).strip()
+    key = text.lower()
+    if not text or key in seen:
+      continue
+    seen.add(key)
+    cleaned.append(text)
+    if len(cleaned) >= max(1, int(limit)):
+      break
+  if cleaned:
+    return cleaned
+  return [fallback]
+
+
+def _markdown_bullets(rows: list[str], fallback: str, limit: int = 12) -> str:
+  cleaned = _unique_prompt_rows(rows, fallback=fallback, limit=limit)
+  return "\n".join(f"- {row}" for row in cleaned)
+
+
+def _is_job_search_workflow(workflow: dict[str, Any], required_tools: list[str], intent_label: str) -> bool:
+  tool_keys = _workflow_tool_keys(workflow)
+  for tool in required_tools:
+    key = _normalize_tool_key(tool)
+    if key:
+      tool_keys.add(key)
+  sites = _browser_domains_from_workflow(workflow)
+  if any("linkedin." in str(site).lower() for site in sites):
+    return True
+  if "linkedin" in tool_keys:
+    return True
+  text = f"{str(intent_label or '').lower()} {str(workflow.get('name') or '').lower()} {str(workflow.get('details') or '').lower()}"
+  return any(token in text for token in ("job", "jobs", "application", "hiring", "recruiter", "career", "resume"))
+
+
+def _prompt_required_tools(workflow: dict[str, Any], required_tools: list[str]) -> list[str]:
+  sites = _browser_domains_from_workflow(workflow)
+  rows: list[str] = []
+  for raw in required_tools:
+    key = _normalize_tool_key(raw)
+    pretty = _friendly_tool_name(key or raw)
+    if key == "browser" and sites:
+      rows.append(f"{pretty} (observed sites: {', '.join(sites[:4])})")
+    else:
+      rows.append(pretty)
+  if not rows and sites:
+    rows.append(f"Web Browser (observed sites: {', '.join(sites[:4])})")
+  return _unique_prompt_rows(rows, fallback="Observed workflow tools only (no external tools inferred).", limit=10)
+
+
+def _prompt_core_objective_rows(job_flow: bool, discovery_surface: str) -> list[str]:
+  if job_flow:
+    return [
+      f"find relevant jobs from {discovery_surface},",
+      "add them to a tracker in a structured and deduplicated way,",
+      "conduct deep research on each company,",
+      "produce useful summaries that help me evaluate whether to apply.",
+    ]
+  return [
+    f"find relevant qualifying work items from {discovery_surface},",
+    "add them to a tracker in a structured and deduplicated way,",
+    "conduct deep context research on each selected item or organization,",
+    "produce useful summaries that help me decide what action to take next.",
+  ]
+
+
+def _prompt_success_rows(job_flow: bool, discovery_surface: str) -> list[str]:
+  if job_flow:
+    return [
+      f"relevant {discovery_surface} jobs are consistently identified using clear qualification rules,",
+      "jobs are added to a tracker with validated fields and no duplicate entries,",
+      "each company is researched in depth using public web sources,",
+      "outputs are logged clearly with completion status, confidence, and failure reasons,",
+      "exceptions such as auth/session expiry, broken pages, missing fields, or research gaps are surfaced for review rather than silently ignored,",
+      "the workflow is idempotent, auditable, and practical to run repeatedly.",
+    ]
+  return [
+    "qualifying workflow items are identified using explicit relevance thresholds,",
+    "records are written with validated fields and deduplication safeguards,",
+    "supporting context research is generated from observed tools and public sources,",
+    "outputs include completion status, confidence notes, and clear failure reasons,",
+    "exceptions such as auth/session expiry, missing fields, and source inconsistencies are surfaced for review rather than silently ignored,",
+    "the workflow is idempotent, auditable, and practical to run repeatedly.",
+  ]
+
+
+def _prompt_stage_sections(job_flow: bool, discovery_surface: str) -> list[tuple[str, list[str]]]:
+  if job_flow:
+    return [
+      (
+        "Stage 1: Job Discovery",
+        [
+          f"visit {discovery_surface} job search pages",
+          "detect job posts that match predefined relevance criteria",
+          "extract core job details",
+          "identify whether the job is new or already tracked",
+          "decide whether to save, skip, or flag for review",
+        ],
+      ),
+      (
+        "Stage 2: Structured Tracking",
+        [
+          "write the selected job into a tracker",
+          "ensure deduplication through a strong idempotency key",
+          "validate required fields before writing",
+          "log status of write success or failure",
+          "preserve prior data rather than destructively overwriting it",
+        ],
+      ),
+      (
+        "Stage 3: Deep Company Research",
+        [
+          "company overview",
+          "core product or service",
+          "business model",
+          "stage and traction signals",
+          "leadership and notable team members",
+          "recent news and major developments",
+          "funding history if available",
+          "hiring signals",
+          "market positioning and competitors",
+          "risks or red flags",
+          "why the role may or may not be attractive",
+        ],
+      ),
+      (
+        "Stage 4: Candidate Decision Support",
+        [
+          "Is this company worth my time?",
+          "Is this role aligned with my goals?",
+          "What is differentiated or risky about this opportunity?",
+          "What should I investigate further before applying?",
+        ],
+      ),
+    ]
+  return [
+    (
+      "Stage 1: Signal Discovery",
+      [
+        f"visit {discovery_surface} and related observed workflow surfaces",
+        "detect items that match predefined relevance criteria",
+        "extract core details needed for downstream decisions",
+        "identify whether the item is new or already tracked",
+        "decide whether to save, skip, or flag for review",
+      ],
+    ),
+    (
+      "Stage 2: Structured Tracking",
+      [
+        "write selected items into a tracker",
+        "ensure deduplication through a strong idempotency key",
+        "validate required fields before writing",
+        "log status of write success or failure",
+        "preserve prior data rather than destructively overwriting it",
+      ],
+    ),
+    (
+      "Stage 3: Context Research",
+      [
+        "subject/company overview",
+        "core product, process, or initiative context",
+        "business or operational significance",
+        "stage and traction signals where relevant",
+        "recent updates and noteworthy developments",
+        "competitive or comparative positioning",
+        "risks or red flags",
+        "why the opportunity may or may not be attractive",
+      ],
+    ),
+    (
+      "Stage 4: Decision Support",
+      [
+        "Is this worth deeper follow-up?",
+        "Is this aligned with my goals and priorities?",
+        "What is differentiated or risky here?",
+        "What should I investigate further before acting?",
+      ],
+    ),
+  ]
+
+
 def _build_llm_prompt_payload(
   *,
   workflow: dict[str, Any],
@@ -2817,26 +3000,186 @@ def _build_llm_prompt_payload(
   process_steps: list[str],
   required_tools: list[str],
 ) -> str:
-  role = "Automation Systems Architect focused on reliable workflow agents"
-  success = (
-    "Success means the workflow executes with validated inputs, idempotent writes, clear completion logs, "
-    "and escalation of exceptions without manual copy-paste."
+  intent = _infer_workflow_intent(workflow)
+  intent_label = str(intent.get("label") or "reliable workflow execution and decision support")
+  job_flow = _is_job_search_workflow(workflow, required_tools, intent_label)
+  discovery_surface = "LinkedIn" if job_flow else "the observed workflow tools"
+
+  role = (
+    "You are an Automation Systems Architect focused on reliable workflow agents, "
+    "job-search automation, structured data capture, and company intelligence research."
+    if job_flow
+    else "You are an Automation Systems Architect focused on reliable workflow agents, "
+    "intent-aware workflow automation, structured data capture, and company intelligence research."
   )
+
+  objective_rows = _prompt_core_objective_rows(job_flow, discovery_surface)
+  success_rows = _prompt_success_rows(job_flow, discovery_surface)
+  stage_sections = _prompt_stage_sections(job_flow, discovery_surface)
   watchouts = _automation_watchouts(workflow, required_tools)
   avoid_items = _automation_avoid_items(required_tools)
-  step_lines = "\n".join(f"- {step}" for step in process_steps[:8]) if process_steps else "- No process steps provided."
-  tool_lines = "\n".join(f"- {tool}" for tool in required_tools[:8]) if required_tools else "- No explicit tools provided."
-  watch_lines = "\n".join(f"- {item}" for item in watchouts) if watchouts else "- No specific risks detected."
-  avoid_lines = "\n".join(f"- {item}" for item in avoid_items) if avoid_items else "- No avoid-list provided."
+  process_lines = _markdown_bullets(process_steps[:12], fallback="No process steps provided.", limit=12)
+  tool_lines = _markdown_bullets(_prompt_required_tools(workflow, required_tools), fallback="No explicit tools provided.", limit=12)
+  watch_lines = _markdown_bullets(watchouts, fallback="No specific risks detected.", limit=6)
+  avoid_lines = _markdown_bullets(avoid_items, fallback="No avoid-list provided.", limit=6)
+  objective_lines = _markdown_bullets(objective_rows, fallback="design a reliable automation around this workflow.", limit=6)
+  success_lines = _markdown_bullets(success_rows, fallback="the workflow runs reliably with validated outputs and visible failure handling.", limit=8)
+
+  constraint_rows = [
+    "Only add or process items that pass relevance thresholds.",
+    "Avoid duplicate entries caused by retries, repeated visits, or duplicate listing surfaces.",
+    "Avoid destructive writes, deletions, or overwrites without an explicit confirmation checkpoint.",
+    "Avoid running full deep research on every noisy trigger; require qualification first.",
+    "Avoid silent failures; always emit failure context, likely cause, and retry guidance.",
+    "Surface auth/session issues explicitly.",
+    "Preserve logs for auditability.",
+    "Prefer modular architecture so discovery, tracking, and research can run independently if needed.",
+  ]
+  constraint_lines = _markdown_bullets(constraint_rows, fallback="Apply explicit guardrails for reliability and auditability.", limit=12)
+
+  stage_blocks: list[str] = []
+  for stage_title, rows in stage_sections:
+    stage_blocks.append(f"### {stage_title}\n{_markdown_bullets(rows, fallback='No stage details provided.', limit=14)}")
+  stage_text = "\n\n".join(stage_blocks)
 
   return (
-    f"## Role To Assume\n{role}\n\n"
-    f"## Objective and Success\n**Objective:** {goal}\n**Success Looks Like:** {success}\n\n"
-    f"## Process Map\n{step_lines}\n\n"
-    f"## Tools Required\n{tool_lines}\n\n"
-    f"## What To Look Out For\n{watch_lines}\n\n"
-    f"## What To Avoid\n{avoid_lines}\n\n"
-    f"## Context\n- Workflow Title: {title}\n- Window: last {int(max(1, window_days))} days"
+    "## Role to Assume\n"
+    f"{role}\n\n"
+    "## Core Objective\n"
+    "Design an automation system that helps me:\n"
+    f"{objective_lines}\n\n"
+    "The system should reduce manual browsing, copying, and context switching while maintaining high reliability and clear human oversight.\n"
+    f"Operational target: {goal}\n\n"
+    "## Success Criteria\n"
+    "Success means:\n"
+    f"{success_lines}\n\n"
+    "## Instructions for How to Think\n"
+    "Reason carefully and systematically before answering, but do not reveal hidden internal reasoning.\n"
+    "Instead, provide a structured and transparent analysis that shows:\n"
+    "- assumptions,\n"
+    "- workflow diagnosis,\n"
+    "- system design,\n"
+    "- agent responsibilities,\n"
+    "- qualifying logic,\n"
+    "- data schema,\n"
+    "- error handling,\n"
+    "- prioritization,\n"
+    "- risks and tradeoffs.\n\n"
+    "Be practical, not theoretical.\n"
+    "Be critical about where full automation is appropriate versus where human review should remain.\n"
+    "Do not assume every item should be captured or every company/topic should be researched equally deeply.\n"
+    "Design for signal over noise.\n\n"
+    "## Workflow to Design\n"
+    f"The target workflow should support this inferred intent: {intent_label}.\n\n"
+    f"{stage_text}\n\n"
+    "## Existing Process Map\n"
+    f"{process_lines}\n\n"
+    "## Tools Required\n"
+    f"{tool_lines}\n\n"
+    "## Key Design Constraints\n"
+    f"{constraint_lines}\n\n"
+    "## What to Look Out For\n"
+    f"{watch_lines}\n\n"
+    "## What to Avoid\n"
+    f"{avoid_lines}\n\n"
+    "## Context\n"
+    f"- Workflow Title: {title}\n"
+    f"- Window: last {int(max(1, window_days))} days\n\n"
+    "## What I Want You to Produce\n"
+    "Please structure your response exactly as follows:\n\n"
+    "### 1. Context Summary\n"
+    "Summarize the workflow and operating objective.\n\n"
+    "### 2. Assumptions\n"
+    "List the assumptions you are making about the process, tracker, and decision goals.\n\n"
+    "### 3. Workflow Diagnosis\n"
+    "Explain where the current friction likely exists between discovery, data capture, research, and decision-making.\n\n"
+    "### 4. Recommended Automation Design\n"
+    "Design the automation end-to-end.\n"
+    "Include:\n"
+    "- triggers,\n"
+    "- qualifying conditions,\n"
+    "- extraction logic,\n"
+    "- deduplication logic,\n"
+    "- tracker write logic,\n"
+    "- research workflow,\n"
+    "- review checkpoints,\n"
+    "- completion logging.\n\n"
+    "### 5. Recommended Agents\n"
+    "Define the agents that should exist in the system.\n"
+    "For each agent, include:\n"
+    "- name,\n"
+    "- mission,\n"
+    "- trigger,\n"
+    "- inputs,\n"
+    "- outputs,\n"
+    "- boundaries,\n"
+    "- escalation rules,\n"
+    "- human-in-the-loop requirements,\n"
+    "- key failure modes.\n\n"
+    "### 6. Qualification Framework\n"
+    "Define how the system should decide whether an item is relevant enough to save.\n"
+    "Include:\n"
+    "- hard filters,\n"
+    "- soft scoring criteria,\n"
+    "- reasons to skip,\n"
+    "- reasons to flag for review.\n\n"
+    "### 7. Tracker Schema\n"
+    "Propose the ideal tracker structure and fields.\n"
+    "Include:\n"
+    "- item-level fields,\n"
+    "- organization/company-level fields,\n"
+    "- research-level fields,\n"
+    "- workflow status fields,\n"
+    "- timestamps,\n"
+    "- idempotency key design.\n\n"
+    "### 8. Research Framework\n"
+    "Design the deep research output template.\n"
+    "It should capture:\n"
+    "- summary,\n"
+    "- product/service context,\n"
+    "- business model,\n"
+    "- market,\n"
+    "- team,\n"
+    "- traction,\n"
+    "- funding when available,\n"
+    "- news,\n"
+    "- competitors,\n"
+    "- risks,\n"
+    "- decision thesis,\n"
+    "- open questions.\n\n"
+    "### 9. Prioritization Logic\n"
+    "Explain when the system should:\n"
+    "- only save an item,\n"
+    "- save plus light research,\n"
+    "- save plus deep research,\n"
+    "- escalate to me for manual review.\n\n"
+    "### 10. Reliability and Error Handling\n"
+    "Describe:\n"
+    "- retry strategy,\n"
+    "- duplicate prevention,\n"
+    "- logging,\n"
+    "- failure alerts,\n"
+    "- fallback behavior,\n"
+    "- safe handling of partial completion.\n\n"
+    "### 11. What Should Stay Human-Led\n"
+    "Identify which parts of the process should remain human-owned and why.\n\n"
+    "### 12. Implementation Roadmap\n"
+    "Break this into phases:\n"
+    "- Phase 1: basic capture and tracking,\n"
+    "- Phase 2: qualification and deduplication,\n"
+    "- Phase 3: research agent,\n"
+    "- Phase 4: decision-support layer.\n\n"
+    "### 13. Final Recommendation\n"
+    "End with:\n"
+    "- the best minimal viable automation,\n"
+    "- the best longer-term agent system,\n"
+    "- the biggest risk to avoid,\n"
+    "- the most important design principle.\n\n"
+    "## Quality Bar\n"
+    "The answer should be detailed, operational, and implementation-aware.\n"
+    "Do not give generic suggestions like 'build an agent'.\n"
+    "Specify exactly how the workflow should work, what each component does, and where human judgment should remain.\n"
+    "Optimize for usefulness, reliability, and decision quality."
   )
 
 
