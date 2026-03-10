@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Personal Intelligence OS Intent Adapter",
+  "version": "0.1.0",
+  "description": "Low-overhead browser intent events for Personal Intelligence OS",
+  "permissions": ["tabs", "storage", "alarms"],
+  "host_permissions": [
+    "http://127.0.0.1:5180/*",
+    "http://localhost:5180/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "service_worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Personal Intelligence OS"
+  }
+}

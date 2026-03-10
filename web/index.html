@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Personal Intelligence OS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.cdnfonts.com/css/autography" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css?v=autodraft-20260308aq" />
+  </head>
+  <body>
+    <div class="app-root">
+      <aside class="sidebar">
+        <div class="logo">PIOS</div>
+        <nav class="tab-nav">
+          <button class="tab-btn is-active" data-tab="overview" type="button">
+            <span class="tab-icon">O</span>
+            <span>Overview</span>
+          </button>
+          <button class="tab-btn" data-tab="claude" type="button">
+            <span class="tab-icon">L</span>
+            <span>Automation Lab</span>
+          </button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <header class="header">
+          <div class="tracking">Tracking active</div>
+          <div class="search-row">
+            <input id="searchInput" type="search" placeholder="Search workflows and tasks" />
+          </div>
+          <div class="header-controls">
+            <select id="days">
+              <option value="7" selected>Week (7d)</option>
+              <option value="30">Month (30d)</option>
+              <option value="90">Quarter (90d)</option>
+            </select>
+            <select id="monthFilter" class="month-filter" aria-label="Select month">
+              <option value="">Select month</option>
+            </select>
+            <button id="refreshBtn" type="button">Rescan</button>
+          </div>
+        </header>
+
+        <div id="statusLine" class="status-line">Loading weekly ledger...</div>
+
+        <section id="overviewTab" class="tab-panel is-visible">
+          <div class="layout-grid">
+            <section class="module performance-module">
+              <h1 id="performanceHeading">Weekly Performance</h1>
+              <p class="module-sub">Stacked ledger bars by task type with previous-week ghost comparison.</p>
+              <div id="performanceLegend" class="performance-legend"></div>
+              <div class="ledger-grid">
+                <div id="daySelector" class="day-selector"></div>
+                <div class="ledger-chart-wrap">
+                  <svg id="ledgerChart" viewBox="0 0 980 360" role="img" aria-label="Weekly ink-flow chart"></svg>
+                </div>
+              </div>
+            </section>
+
+            <section class="module tool-analysis-module">
+              <h2 id="distributionHeading" class="tool-analysis-heading" role="button" tabindex="0" title="Open full tool analysis">
+                Tool Analysis
+              </h2>
+              <p id="distributionSub" class="module-sub">Breakdown of time spent in each tool across the selected timeline.</p>
+              <div id="workflowCards" class="workflow-cards"></div>
+            </section>
+          </div>
+
+          <section class="module">
+            <h2>Workflow Analysis</h2>
+            <p class="module-sub">Select a workflow to inspect top tools, action frequency, and duration.</p>
+            <div class="analysis-grid">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Workflow</th>
+                      <th>Type</th>
+                      <th>Friction Score</th>
+                      <th>Action Frequency</th>
+                      <th>Total Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody id="workflowRows"></tbody>
+                </table>
+              </div>
+              <aside id="detailPanel" class="detail-panel"></aside>
+            </div>
+          </section>
+        </section>
+
+        <section id="claudeTab" class="tab-panel">
+          <section class="module">
+            <h1>Automation Lab</h1>
+            <p class="module-sub">Review automation opportunities and package selected workflows into a blueprint.</p>
+            <section class="automation-section automation-section-suggested">
+              <p class="automation-section-label">Automation Suggested</p>
+              <div id="automationIdeas" class="idea-list"></div>
+            </section>
+            <section class="automation-section automation-section-completed">
+              <h2>Completed Automations</h2>
+              <div id="completedAutomations" class="idea-list"></div>
+            </section>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <aside id="postitPanel" class="postit-panel">
+      <header class="postit-header">
+        <h2>Automation Suggested</h2>
+        <button id="closePostitBtn" class="close-postit-btn" type="button" aria-label="Close automation panel">Close</button>
+      </header>
+      <p id="draftingState" class="drafting-state">Drafting your instructions...</p>
+      <section id="postitTiles" class="postit-tiles">
+        <article class="postit-tile">
+          <div class="tile-head">
+            <p class="tile-title">Process Map</p>
+            <button id="editProcessMapBtn" class="mini-btn tile-edit-btn" type="button">Edit</button>
+          </div>
+          <div id="processMapEditWrap" class="flow-edit-wrap">
+            <textarea
+              id="processMapEditInput"
+              class="flow-edit-input"
+              rows="3"
+              placeholder="Describe the change in natural language, e.g. 'Insert a QA validation step before the final run summary.'"
+            ></textarea>
+            <div class="flow-edit-actions">
+              <button id="applyProcessMapEditBtn" class="review-btn" type="button">Update With LLM</button>
+              <button id="cancelProcessMapEditBtn" class="mini-btn" type="button">Cancel</button>
+            </div>
+          </div>
+          <div id="processMapTile" class="flow-map-canvas">Select a workflow and click automation suggested.</div>
+        </article>
+        <article class="postit-tile">
+          <div class="tile-head">
+            <p class="tile-title">LLM Prompt</p>
+            <div class="tile-head-actions">
+              <button id="editPromptBtn" class="mini-btn tile-edit-btn" type="button">Edit</button>
+              <button id="copyPromptBtn" class="mini-btn tile-edit-btn" type="button">Copy Prompt</button>
+            </div>
+          </div>
+          <div id="promptEditWrap" class="flow-edit-wrap">
+            <textarea id="promptEditInput" class="flow-edit-input" rows="10" placeholder="Edit the suggested prompt..."></textarea>
+            <div class="flow-edit-actions">
+              <button id="savePromptEditBtn" class="review-btn" type="button">Save Prompt</button>
+              <button id="cancelPromptEditBtn" class="mini-btn" type="button">Cancel</button>
+            </div>
+          </div>
+          <pre id="llmPromptTile" class="tile-code">Prompt payload will appear here.</pre>
+        </article>
+      </section>
+      <div id="postitMeta" class="postit-meta"></div>
+      <footer class="postit-actions">
+        <button id="executeBtn" class="yeet-btn" type="button">Mark Automation Done</button>
+        <span id="postitSignature" class="postit-signature"></span>
+      </footer>
+    </aside>
+
+    <div id="toolAnalysisPopupOverlay" class="tool-popup-overlay" hidden>
+      <aside id="toolAnalysisPopup" class="tool-popup" role="dialog" aria-modal="true" aria-labelledby="toolPopupHeading">
+        <header class="tool-popup-header">
+          <h2 id="toolPopupHeading">Tool Analysis</h2>
+          <button id="closeToolAnalysisPopupBtn" class="close-postit-btn" type="button" aria-label="Close tool analysis">Close</button>
+        </header>
+        <p id="toolPopupSub" class="module-sub">Full tool breakdown for the selected timeline.</p>
+        <div id="toolPopupCards" class="workflow-cards tool-popup-cards"></div>
+      </aside>
+    </div>
+
+    <template id="emptyWorkflowRow">
+      <tr>
+        <td colspan="5">
+          <div class="empty-row">No workflows found for this filter.</div>
+        </td>
+      </tr>
+    </template>
+
+    <script type="module" src="/app.js?v=autodraft-20260308ar"></script>
+  </body>
+</html>
